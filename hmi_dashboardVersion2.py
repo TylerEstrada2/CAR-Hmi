@@ -94,14 +94,13 @@ class BatteryWidget(QWidget):
                 painter.setBrush(Qt.gray)  # Gray bars
             painter.drawRect(QRect(x, y, bar_width, bar_height))
 
-
 class Dashboard(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Autonomous Vehicle HMI")
         self.setGeometry(100, 100, 800, 480)
         self.setFixedSize(800, 480)  # Fixed size to prevent elongation
-        self.setStyleSheet("background-color: #1E1E2F; color: white;")
+        self.setStyleSheet("background-color: #555F61; color: white;")
         
         self.initUI()
         self.initTimer()
@@ -112,7 +111,7 @@ class Dashboard(QWidget):
         # Top bar with navigation buttons
         self.top_bar = QHBoxLayout()
         self.buttons = []
-        screen_names = ["Home", "Performance", "Navigation", "Settings", "Info"]
+        screen_names = ["Dyno Mode", "Performance", "Errors", "🅿 Auto Park", "CAV Data"]
         for i, name in enumerate(screen_names):
             btn = QPushButton(name)
             btn.clicked.connect(lambda checked, index=i: self.switch_screen(index + 1))
@@ -129,11 +128,20 @@ class Dashboard(QWidget):
         self.initMainScreen()
         self.stacked_widget.addWidget(self.main_screen)
         
-        # Additional screens
-        for i, name in enumerate(screen_names):
-            screen = self.create_screen(name)
-            self.stacked_widget.addWidget(screen)
-        
+        # Define each tab screen with unique content
+        self.dyno_mode = self.create_dyno_screen()
+        self.performance = self.create_performance_screen()
+        self.errors = self.create_errors_screen()
+        self.auto_park = self.create_auto_park_screen()
+        self.cav_data = self.create_cav_data_screen()
+
+        # Add tab screens to the stacked widget
+        self.stacked_widget.addWidget(self.dyno_mode)
+        self.stacked_widget.addWidget(self.performance)
+        self.stacked_widget.addWidget(self.errors)
+        self.stacked_widget.addWidget(self.auto_park)
+        self.stacked_widget.addWidget(self.cav_data)
+
         self.main_layout.addWidget(self.stacked_widget)
         self.setLayout(self.main_layout)
 
@@ -151,51 +159,59 @@ class Dashboard(QWidget):
         else:
             button.setStyleSheet("")
 
-    
     def initMainScreen(self):
         main_layout = QVBoxLayout(self.main_screen)
         
-        # Speed and Battery Labels
+        # Speed Labels
         self.labels_layout = QHBoxLayout()
-        self.speed_label = QLabel("Speed: 0 km/h")
+        self.speed_label = QLabel("Speed: 0 mph")
         self.speed_label.setFont(QFont("Arial", 24))
         self.speed_label.setAlignment(Qt.AlignCenter)
         
-        self.battery_label = QLabel("Battery: 0%")
-        self.battery_label.setFont(QFont("Arial", 24))
-        self.battery_label.setAlignment(Qt.AlignCenter)
-        
         self.labels_layout.addStretch()
         self.labels_layout.addWidget(self.speed_label)
-        self.labels_layout.addSpacing(330)  # Increased spacing between the labels
+        self.labels_layout.addStretch()
+
+        # Battery Label
+        self.battery_layout = QHBoxLayout()
+        self.battery_label = QLabel("Battery: 0%")
+        self.battery_label.setFont(QFont("Arial", 24))
+        self.battery_label.setAlignment(Qt.AlignRight)
+
+        self.battery_layout.addStretch()
+        self.battery_layout.addWidget(self.speed_label)
+        
+        self.labels_layout.addSpacing(300)  # Increased spacing between the labels
         self.labels_layout.addWidget(self.battery_label)
         self.labels_layout.addStretch()
         
         # Speedometer, buttons, and Battery Widget
         self.speedometer = SpeedometerWidget()
         self.battery_widget = BatteryWidget()
-        
+
         self.controls_layout = QVBoxLayout()
 
-        self.acc_button = QPushButton("Adaptive Cruise Control")
-        self.acc_button.setIcon(QIcon("acc_icon.png")) 
+        self.acc_button = QPushButton()
+        self.acc_button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\acc_icon.png")) 
         self.acc_button.setIconSize(QSize(100, 100))
-        self.acc_button.setFixedSize(100, 100)  # Set fixed size for square shape
+        self.acc_button.setFixedSize(100, 100)
         self.acc_button.setCheckable(True)
         self.acc_button.clicked.connect(self.toggle_button_color)
 
-        self.lane_assist_button = QPushButton("Lane Assist")
-        self.lane_assist_button.setFixedSize(100, 100)  # Set fixed size for square shape
+        self.lane_assist_button = QPushButton()
+        self.lane_assist_button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\LKA_icon.png"))
+        self.lane_assist_button.setIconSize(QSize(100,100))
+        self.lane_assist_button.setFixedSize(100, 100)
         self.lane_assist_button.setCheckable(True)
         self.lane_assist_button.clicked.connect(self.toggle_button_color)
 
         self.placeholder_button_1 = QPushButton("Placeholder 1")
-        self.placeholder_button_1.setFixedSize(100, 100)  # Set fixed size for square shape
+        self.placeholder_button_1.setFixedSize(100, 100)
         self.placeholder_button_1.setCheckable(True)
         self.placeholder_button_1.clicked.connect(self.toggle_button_color)
 
         self.placeholder_button_2 = QPushButton("Placeholder 2")
-        self.placeholder_button_2.setFixedSize(100, 100)  # Set fixed size for square shape
+        self.placeholder_button_2.setFixedSize(100, 100)
         self.placeholder_button_2.setCheckable(True)
         self.placeholder_button_2.clicked.connect(self.toggle_button_color)
 
@@ -204,8 +220,6 @@ class Dashboard(QWidget):
         self.controls_layout.addWidget(self.placeholder_button_1)
         self.controls_layout.addWidget(self.placeholder_button_2)
         self.controls_layout.addStretch()
-
-
         
         self.gauges_layout = QHBoxLayout()
         self.gauges_layout.addStretch()
@@ -216,21 +230,105 @@ class Dashboard(QWidget):
         
         main_layout.addLayout(self.labels_layout)
         main_layout.addLayout(self.gauges_layout)
+
+    def create_dyno_screen(self):
+        dyno_screen = QWidget()
     
-    def create_screen(self, content):
-        screen = QWidget()
-        layout = QVBoxLayout(screen)
+        # Create a horizontal layout for the label and button
+        dyno_layout = QHBoxLayout()
+        dyno_layout.setSpacing(10) # Set smaller spacing between widgets
+    
+        dyno_label = QLabel("Activate Dyno Mode:")
+        dyno_label.setFont(QFont("Arial", 24))
+        dyno_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)  # Vertically center, align left
+        dyno_layout.addWidget(dyno_label, alignment=Qt.AlignVCenter)
+    
+        dyno_button = QPushButton()
+        dyno_button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\walter.jpg"))
+        dyno_button.setIconSize(QSize(300, 100))
+        dyno_button.setFixedSize(200, 100)
+        dyno_button.setCheckable(True)
+        dyno_button.clicked.connect(self.toggle_dyno_icon)
+        dyno_layout.addWidget(dyno_button, alignment=Qt.AlignLeft)
+
+        # Create a vertical layout for the entire screen
+        screen_layout = QVBoxLayout(dyno_screen)
+        screen_layout.addLayout(dyno_layout)
+    
+        # Add the back button at the bottom
+        back_button = QPushButton("Back to Main Dashboard")
+        back_button.clicked.connect(lambda: self.switch_screen(0))
+        screen_layout.addWidget(back_button, alignment=Qt.AlignBottom)
+    
+        dyno_screen.setLayout(screen_layout)
+        return dyno_screen
+    
+    def toggle_dyno_icon(self): 
+        button = self.sender() 
+        if button.isChecked(): 
+            button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\On_icon.jpg")) 
+        else: 
+            button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\Off_Icon.png"))
+    
+    def create_performance_screen(self):
+        performance_screen = QWidget()
+        performance_layout = QVBoxLayout(performance_screen)
         
-        label = QLabel(content)
-        label.setFont(QFont("Arial", 24))
-        label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(label)
+        performance_label = QLabel("Performance Content")
+        performance_label.setFont(QFont("Arial", 24))
+        performance_label.setAlignment(Qt.AlignCenter)
+        performance_layout.addWidget(performance_label)
         
         back_button = QPushButton("Back to Main Dashboard")
         back_button.clicked.connect(lambda: self.switch_screen(0))
-        layout.addWidget(back_button, alignment=Qt.AlignBottom)
+        performance_layout.addWidget(back_button, alignment=Qt.AlignBottom)
         
-        return screen
+        return performance_screen
+    
+    def create_errors_screen(self):
+        errors_screen = QWidget()
+        errors_layout = QVBoxLayout(errors_screen)
+        
+        errors_label = QLabel("Errors Content")
+        errors_label.setFont(QFont("Arial", 24))
+        errors_label.setAlignment(Qt.AlignCenter)
+        errors_layout.addWidget(errors_label)
+        
+        back_button = QPushButton("Back to Main Dashboard")
+        back_button.clicked.connect(lambda: self.switch_screen(0))
+        errors_layout.addWidget(back_button, alignment=Qt.AlignBottom)
+        
+        return errors_screen
+    
+    def create_auto_park_screen(self):
+        auto_park_screen = QWidget()
+        auto_park_layout = QVBoxLayout(auto_park_screen)
+        
+        auto_park_label = QLabel("Auto Park Content")
+        auto_park_label.setFont(QFont("Arial", 24))
+        auto_park_label.setAlignment(Qt.AlignCenter)
+        auto_park_layout.addWidget(auto_park_label)
+        
+        back_button = QPushButton("Back to Main Dashboard")
+        back_button.clicked.connect(lambda: self.switch_screen(0))
+        auto_park_layout.addWidget(back_button, alignment=Qt.AlignBottom)
+        
+        return auto_park_screen
+    
+    def create_cav_data_screen(self):
+        cav_data_screen = QWidget()
+        cav_data_layout = QVBoxLayout(cav_data_screen)
+        
+        cav_data_label = QLabel("CAV Data Content")
+        cav_data_label.setFont(QFont("Arial", 24))
+        cav_data_label.setAlignment(Qt.AlignCenter)
+        cav_data_layout.addWidget(cav_data_label)
+        
+        back_button = QPushButton("Back to Main Dashboard")
+        back_button.clicked.connect(lambda: self.switch_screen(0))
+        cav_data_layout.addWidget(back_button, alignment=Qt.AlignBottom)
+        
+        return cav_data_screen
     
     def switch_screen(self, index):
         self.stacked_widget.setCurrentIndex(index)
@@ -242,21 +340,18 @@ class Dashboard(QWidget):
     
     def updateData(self):
         # Simulate Speed
-        speed = random.randint(0, 120)
-        self.speed_label.setText(f"Speed: {speed} km/h")
-        self.speedometer.set_speed(speed)
-        
-        # Simulate Battery Gauge
-        battery = random.randint(0, 100)
-        self.battery_label.setText(f"Battery: {battery}%")
-        self.battery_widget.set_charge(battery)
+        speed = random.randint(0, 120) 
+        self.speed_label.setText(f"Speed: {speed} mph") 
+        self.speedometer.set_speed(speed) # Simulate Battery Gauge 
+        battery = random.randint(0, 100) 
+        self.battery_label.setText(f"Battery: {battery}%") 
+        self.battery_widget.set_charge(battery) 
+        # if random.choice([True, False]): # Randomly trigger error for demonstration 
+        # # error_message = "Some" 
+        # # self.showErrorDialog(error_message) 
 
-#        if random.choice([True, False]): # Randomly trigger error for demonstration 
-#            error_message = "Some" 
-#            self.showErrorDialog(error_message)
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = Dashboard()
-    window.show()
+if __name__ == "__main__": 
+    app = QApplication(sys.argv) 
+    window = Dashboard() 
+    window.show() 
     sys.exit(app.exec())
