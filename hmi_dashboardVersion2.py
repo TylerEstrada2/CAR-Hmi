@@ -111,7 +111,7 @@ class Dashboard(QWidget):
         # Top bar with navigation buttons
         self.top_bar = QHBoxLayout()
         self.buttons = []
-        screen_names = ["Dyno Mode", "Performance", "Errors", "🅿 Auto Park", "CAV Data"]
+        screen_names = ["Dyno Mode", "PCM", "Errors", "🅿 Auto Park", "ACC"]
         for i, name in enumerate(screen_names):
             btn = QPushButton(name)
             btn.clicked.connect(lambda checked, index=i: self.switch_screen(index + 1))
@@ -236,16 +236,18 @@ class Dashboard(QWidget):
     
         # Create a horizontal layout for the label and button
         dyno_layout = QHBoxLayout()
-        dyno_layout.setSpacing(10) # Set smaller spacing between widgets
-    
+        dyno_layout.addStretch()  # Pushes everything to the left
         dyno_label = QLabel("Activate Dyno Mode:")
-        dyno_label.setFont(QFont("Arial", 24))
-        dyno_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)  # Vertically center, align left
-        dyno_layout.addWidget(dyno_label, alignment=Qt.AlignVCenter)
-    
+
         dyno_button = QPushButton()
-        dyno_button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\walter.jpg"))
-        dyno_button.setIconSize(QSize(300, 100))
+
+        #dyno_label.setFont(QFont("Arial", 24))
+        dyno_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)  # Vertically center, align left
+        dyno_label.setAlignment(Qt.AlignVCenter)
+        dyno_layout.addWidget(dyno_label, alignment=Qt.AlignVCenter)
+
+        dyno_button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\Off_icon.png"))
+        dyno_button.setIconSize(QSize(200, 250))
         dyno_button.setFixedSize(200, 100)
         dyno_button.setCheckable(True)
         dyno_button.clicked.connect(self.toggle_dyno_icon)
@@ -266,16 +268,18 @@ class Dashboard(QWidget):
     def toggle_dyno_icon(self): 
         button = self.sender() 
         if button.isChecked(): 
-            button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\On_icon.jpg")) 
+            button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\On_icon.png")) 
+            #CAN SIGNAL TO BE SENT
         else: 
             button.setIcon(QIcon(r"C:\Users\Tyler\Pictures\Off_Icon.png"))
+            #CAN SIGNAL TO BE SENT
     
     def create_performance_screen(self):
         performance_screen = QWidget()
         performance_layout = QVBoxLayout(performance_screen)
         
         performance_label = QLabel("Performance Content")
-        performance_label.setFont(QFont("Arial", 24))
+        #performance_label.setFont(QFont("Arial", 24))
         performance_label.setAlignment(Qt.AlignCenter)
         performance_layout.addWidget(performance_label)
         
@@ -290,7 +294,7 @@ class Dashboard(QWidget):
         errors_layout = QVBoxLayout(errors_screen)
         
         errors_label = QLabel("Errors Content")
-        errors_label.setFont(QFont("Arial", 24))
+        #errors_label.setFont(QFont("Arial", 24))
         errors_label.setAlignment(Qt.AlignCenter)
         errors_layout.addWidget(errors_label)
         
@@ -305,7 +309,7 @@ class Dashboard(QWidget):
         auto_park_layout = QVBoxLayout(auto_park_screen)
         
         auto_park_label = QLabel("Auto Park Content")
-        auto_park_label.setFont(QFont("Arial", 24))
+        #auto_park_label.setFont(QFont("Arial", 24))
         auto_park_label.setAlignment(Qt.AlignCenter)
         auto_park_layout.addWidget(auto_park_label)
         
@@ -320,7 +324,7 @@ class Dashboard(QWidget):
         cav_data_layout = QVBoxLayout(cav_data_screen)
         
         cav_data_label = QLabel("CAV Data Content")
-        cav_data_label.setFont(QFont("Arial", 24))
+        #cav_data_label.setFont(QFont("Arial", 24))
         cav_data_label.setAlignment(Qt.AlignCenter)
         cav_data_layout.addWidget(cav_data_label)
         
@@ -352,6 +356,10 @@ class Dashboard(QWidget):
 
 if __name__ == "__main__": 
     app = QApplication(sys.argv) 
+
+    globalFont = QFont("Arial",16)
+    app.setFont(globalFont)
+
     window = Dashboard() 
     window.show() 
     sys.exit(app.exec())
