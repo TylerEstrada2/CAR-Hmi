@@ -1,7 +1,11 @@
 import sys
 import time
 import logging
-from PySide6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, 
+    QStackedWidget, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, 
+    QSpacerItem, QSizePolicy
+)
 from PySide6.QtGui import QFont, QPainter, QPen, QColor, QPixmap, QAction
 from PySide6.QtCore import Qt, QRect, QMetaObject, Slot, Q_ARG
 import can
@@ -14,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 db = cantools.database.load_file("/home/user/Code/CAN14_Update_CAVS_2_17_REV2.dbc")
 
-# Updated PCM_SIGNALS to include new placeholder signals
+# Updated PCM_SIGNALS to include MIL_SignalWarning
 PCM_SIGNALS = [
     'FEM_Power', 'REM_Power', 'RESS_SOC', 'RESS_Temp',
     'F_MotTmp', 'R_MotTmp', 'F_InvTmp', 'R_InvTmp', 'Master_Warning',
@@ -22,10 +26,11 @@ PCM_SIGNALS = [
     'Target_distance', 'USP_data_rx', 'Vehicle_ahead', 'ActETRS', 'BrakePdlPos', 'AccelPdlPos',
     'UDP_data_received', 'Sim_state', 'Dyno_mode_request', 'DTC_Code',
     'LCC_Status_Placeholder', 'ACC_StopLight_Placeholder',
-    'AIN_ACTIVATE_PLACEHOLDER'  # Added for AIN button
+    'AIN_ACTIVATE_PLACEHOLDER', 'HMI2DMS_ActivateSignal',
+    'MIL_SignalWarning'  # Added MIL signal
 ]
 
-TX_SIGNALS = ['Dyno_mode_req_sim', 'AIN_ACTIVATE_PLACEHOLDER']  # Added AIN signal to TX
+TX_SIGNALS = ['Dyno_mode_req_sim', 'AIN_ACTIVATE_PLACEHOLDER', 'HMI2DMS_ActivateSignal']
 
 MAIN_DASHBOARD_SIGNALS = [
     'Front Motor Power (kW)', 'Rear Motor Power (kW)', 'Battery Temperature (C)',
@@ -130,7 +135,7 @@ class CACCIndicator(QWidget):
 class LCCIndicator(QWidget):
     def __init__(self):
         super().__init__()
-        self.state = 0  # Default state (inactive)
+        self.state = 0
         self.initUI()
 
     def initUI(self):
@@ -146,28 +151,25 @@ class LCCIndicator(QWidget):
         layout.addWidget(self.icon_label)
 
     def update_color(self):
-        # Gray for inactive (0), green for active (1)
         color = "green" if self.state == 1 else "gray"
         self.icon_label.setStyleSheet(f"background-color: {color}; border-radius: 10px;")
 
     @Slot(int)
     def set_state(self, state):
-        # Default to 0 (inactive) if state is invalid
         self.state = state if state in [0, 1] else 0
         self.update_color()
 
 class TrafficLightIndicator(QWidget):
     def __init__(self):
         super().__init__()
-        self.state = 0  # Default state (none)
-        self.icons = {}  # Dictionary to store all traffic light icons
+        self.state = 0
+        self.icons = {}
         self.initUI()
 
     def initUI(self):
         layout = QHBoxLayout()
         self.setLayout(layout)
         self.icon_label = QLabel()
-        # Load all traffic light icons
         self.icons[0] = QPixmap("/home/user/Code/TrafficLightNone.png").scaled(150, 150, Qt.KeepAspectRatio)
         self.icons[1] = QPixmap("/home/user/Code/TrafficLightGreen.png").scaled(150, 150, Qt.KeepAspectRatio)
         self.icons[2] = QPixmap("/home/user/Code/TrafficLightYellow.png").scaled(150, 150, Qt.KeepAspectRatio)
@@ -178,14 +180,11 @@ class TrafficLightIndicator(QWidget):
         layout.addWidget(self.icon_label)
 
     def update_icon(self):
-        # Display the icon corresponding to the current state
-        # Default to state 0 (none) if the state is invalid
         state = self.state if self.state in self.icons else 0
         self.icon_label.setPixmap(self.icons[state])
 
     @Slot(int)
     def set_state(self, state):
-        # Update the state and switch the icon; default to 0 if invalid
         self.state = state if state in [0, 1, 2, 3] else 0
         self.update_icon()
 
@@ -223,12 +222,8 @@ class Dashboard(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Autonomous Vehicle HMI")
-        # Removed setGeometry to ensure proper fullscreen behavior
         self.setStyleSheet("background-color: #555F61; color: white;")
         self.showFullScreen()
-
-        # Load the background image
-        self.background_pixmap = QPixmap("/home/user/Code/OSUWF_EcoCAR_Logo_Light.png")
 
         self.exit_fullscreen_action = QAction("Exit Fullscreen", self)
         self.exit_fullscreen_action.setShortcut("Esc")
@@ -261,27 +256,20 @@ class Dashboard(QWidget):
         self.ain_send_thread = threading.Thread(target=self.send_ain_messages, daemon=True)
         self.ain_send_thread.start()
 
+        self.dms_active = False
+        self.dms_mode_lock = threading.Lock()
+        self.dms_thread_running = True
+        self.dms_send_thread = threading.Thread(target=self.send_dms_messages, daemon=True)
+        self.dms_send_thread.start()
+
         self.battery_widgets = []
         self.battery_labels = []
         self.dtc_labels = []
+        self.mil_indicator = None  # Add MIL indicator attribute
 
         self.initUI()
         self.can_listener_thread = threading.Thread(target=self.listen_can_messages, daemon=True)
         self.can_listener_thread.start()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        # Draw the background color first
-        painter.fillRect(self.rect(), QColor("#555F61"))
-        # Draw the background image, scaled to fit the window
-        if not self.background_pixmap.isNull():
-            scaled_pixmap = self.background_pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            # Center the image
-            x = (self.width() - scaled_pixmap.width()) // 2
-            y = (self.height() - scaled_pixmap.height()) // 2
-            painter.drawPixmap(x, y, scaled_pixmap)
-        super().paintEvent(event)
 
     def toggle_fullscreen(self):
         if self.isFullScreen():
@@ -299,9 +287,49 @@ class Dashboard(QWidget):
     def send_ain_messages(self):
         while self.ain_thread_running:
             with self.ain_mode_lock:
-                value = 0 if self.ain_mode_active else 1  # Send 0 when active, 1 when inactive
+                value = 0 if self.ain_mode_active else 1
             self.send_ain_can_message(value)
             time.sleep(0.01)
+
+    def send_dms_messages(self):
+        while self.dms_thread_running:
+            with self.dms_mode_lock:
+                value = 1 if self.dms_active else 0
+            self.send_dms_can_message(value)
+            time.sleep(0.01)
+
+    def send_can_message(self, value):
+        try:
+            message_id = 0x519
+            signal_name = "Dyno_mode_req_team"
+            data = db.encode_message(message_id, {signal_name: value}, strict=False)
+            can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
+            self.bus.send(can_msg)
+            logger.info(f"Sent CAN message: ID={hex(message_id)}, Data={data.hex()}")
+        except Exception as e:
+            logger.error(f"Error sending CAN message: {e}")
+
+    def send_ain_can_message(self, value):
+        try:
+            message_id = 0x520
+            signal_name = "AIN_ACTIVATE_PLACEHOLDER"
+            data = db.encode_message(message_id, {signal_name: value}, strict=False)
+            can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
+            self.bus.send(can_msg)
+            logger.info(f"Sent AIN CAN message: ID={hex(message_id)}, Data={data.hex()}")
+        except Exception as e:
+            logger.error(f"Error sending AIN CAN message: {e}")
+
+    def send_dms_can_message(self, value):
+        try:
+            message_id = 0x521
+            signal_name = "HMI2DMS_ActivateSignal"
+            data = db.encode_message(message_id, {signal_name: value}, strict=False)
+            can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
+            self.bus.send(can_msg)
+            logger.info(f"Sent DMS CAN message: ID={hex(message_id)}, Data={data.hex()}")
+        except Exception as e:
+            logger.error(f"Error sending DMS CAN message: {e}")
 
     def listen_can_messages(self):
         while True:
@@ -373,12 +401,21 @@ class Dashboard(QWidget):
             if 'DTC' in PCM_SIGNALS_PCM:
                 row = PCM_SIGNALS_PCM.index('DTC')
                 self.pcm_table.setItem(row, 1, QTableWidgetItem(dtc_desc))
+            if int(value) == 0:  # "No Issues"
+                if self.dtc_label in self.header_layout.children():
+                    self.header_layout.removeWidget(self.dtc_label)
+                    self.dtc_label.setParent(None)
+            else:
+                if self.dtc_label not in self.header_layout.children():
+                    self.header_layout.insertWidget(2, self.dtc_label)
             for label in self.dtc_labels:
                 label.setText(f"DTC: {dtc_desc}")
         elif signal_name == 'LCC_Status_Placeholder':
             self.lcc_indicator.set_state(int(value))
         elif signal_name == 'ACC_StopLight_Placeholder':
             self.traffic_light_indicator.set_state(int(value))
+        elif signal_name == 'MIL_SignalWarning':
+            self.mil_indicator.setVisible(bool(value))
 
         if isinstance(value, float):
             rounded_value = round(value, 1)
@@ -429,28 +466,6 @@ class Dashboard(QWidget):
         elif signal_name == 'CACC_mileage':
             self.cacc_mileage_label.setText(f"Current CACC Mileage: {round(rounded_value*0.621371,1)} mi")
 
-    def send_can_message(self, value):
-        try:
-            message_id = 0x519
-            signal_name = "Dyno_mode_req_team"
-            data = db.encode_message(message_id, {signal_name: value}, strict=False)
-            can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
-            self.bus.send(can_msg)
-            logger.info(f"Sent CAN message: ID={hex(message_id)}, Data={data.hex()}")
-        except Exception as e:
-            logger.error(f"Error sending CAN message: {e}")
-
-    def send_ain_can_message(self, value):
-        try:
-            message_id = 0x520  # Adjust message ID as needed
-            signal_name = "AIN_ACTIVATE_PLACEHOLDER"
-            data = db.encode_message(message_id, {signal_name: value}, strict=False)
-            can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
-            self.bus.send(can_msg)
-            logger.info(f"Sent AIN CAN message: ID={hex(message_id)}, Data={data.hex()}")
-        except Exception as e:
-            logger.error(f"Error sending AIN CAN message: {e}")
-
     def toggle_dyno_icon(self):
         button = self.sender()
         button.setFixedSize(200, 100)
@@ -472,6 +487,17 @@ class Dashboard(QWidget):
                 button.setStyleSheet("background-color: gray; color: black;")
                 self.ain_mode_active = False
 
+    def toggle_dms_icon(self):
+        button = self.sender()
+        button.setFixedSize(200, 100)
+        with self.dms_mode_lock:
+            if button.isChecked():
+                button.setStyleSheet("background-color: green; color: white;")
+                self.dms_active = True
+            else:
+                button.setStyleSheet("background-color: gray; color: black;")
+                self.dms_active = False
+
     @Slot(str, int)
     def update_signal_display_int(self, signal_name, value):
         self.update_signal_display(signal_name, value)
@@ -488,14 +514,12 @@ class Dashboard(QWidget):
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Create the fixed header
         self.header_layout = QHBoxLayout()
+        self.header_layout.setSpacing(50)
         header_widget = QWidget()
-        # Set the header background to match the screen background
         header_widget.setStyleSheet("background-color: #555F61;")
         header_widget.setLayout(self.header_layout)
 
-        # Battery widget and percentage in the header
         battery_container = QWidget()
         battery_layout = QHBoxLayout(battery_container)
         self.battery_widget = BatteryWidget()
@@ -505,12 +529,19 @@ class Dashboard(QWidget):
         battery_layout.addWidget(self.battery_label)
         self.header_layout.addWidget(battery_container)
 
-        # DTC status in the header
+        self.header_layout.addSpacerItem(QSpacerItem(100, 0, QSizePolicy.Fixed, QSizePolicy.Minimum))
+
         self.dtc_label = QLabel("DTC: No Issues")
         self.dtc_label.setFont(QFont("Arial", 20))
-        self.header_layout.addWidget(self.dtc_label)
 
-        # AIN button in the header
+        self.mil_indicator = QLabel()
+        mil_pixmap = QPixmap("Home/Code/MIL.png")  # Replace with actual path
+        mil_pixmap = mil_pixmap.scaled(60, 60, Qt.KeepAspectRatio)
+        self.mil_indicator.setPixmap(mil_pixmap)
+        self.mil_indicator.setVisible(False)
+        self.header_layout.addWidget(self.mil_indicator)
+        self.header_layout.addSpacerItem(QSpacerItem(40, 0, QSizePolicy.Fixed, QSizePolicy.Minimum))
+
         self.ain_button = QPushButton("AIN ACTIVATE")
         self.ain_button.setFixedSize(200, 60)
         self.ain_button.setCheckable(True)
@@ -521,12 +552,10 @@ class Dashboard(QWidget):
         self.header_layout.addStretch()
         self.main_layout.addWidget(header_widget)
 
-        # Initialize battery and DTC lists with header widgets
         self.battery_widgets = [self.battery_widget]
         self.battery_labels = [self.battery_label]
         self.dtc_labels = [self.dtc_label]
 
-        # Tab buttons below the header
         self.top_bar = QHBoxLayout()
         screen_names = ["Dyno Mode", "PCM", "ACC", "LCC", "AIN"]
         for i, name in enumerate(screen_names):
@@ -536,7 +565,6 @@ class Dashboard(QWidget):
             self.top_bar.addWidget(btn)
         self.main_layout.addLayout(self.top_bar)
 
-        # Stacked widget for the screens
         self.stacked_widget = QStackedWidget()
         self.main_screen = QWidget()
         self.initMainScreen()
@@ -566,25 +594,44 @@ class Dashboard(QWidget):
 
     def initMainScreen(self):
         main_layout = QVBoxLayout(self.main_screen)
+        content_layout = QHBoxLayout()
+
+        dms_container = QHBoxLayout()
+        dms_label = QLabel("Activate DMS System:")
+        dms_label.setFont(QFont("Arial", 28))
+        dms_container.addWidget(dms_label)
+        self.dms_button = QPushButton("DMS")
+        self.dms_button.setFixedSize(200, 100)
+        self.dms_button.setCheckable(True)
+        self.dms_button.setStyleSheet("background-color: gray; color: black;")
+        self.dms_button.clicked.connect(self.toggle_dms_icon)
+        dms_container.addWidget(self.dms_button)
+        content_layout.addLayout(dms_container)
 
         self.pcm_table_main = QTableWidget()
         self.pcm_table_main.setRowCount(len(MAIN_DASHBOARD_SIGNALS))
         self.pcm_table_main.setColumnCount(2)
         self.pcm_table_main.setHorizontalHeaderLabels(["Signal", "Value"])
         self.pcm_table_main.verticalHeader().setVisible(False)
-        self.pcm_table_main.setFixedWidth(422)
-        self.pcm_table_main.setFixedHeight(270)
+        self.pcm_table_main.setFixedWidth(960)
+        self.pcm_table_main.setMinimumHeight(400)
+        
+        table_font = QFont("Arial", 24)
+        self.pcm_table_main.setFont(table_font)
+        
         for row in range(self.pcm_table_main.rowCount()):
-            self.pcm_table_main.setRowHeight(row, 70)
+            self.pcm_table_main.setRowHeight(row, 80)
         for row, signal in enumerate(MAIN_DASHBOARD_SIGNALS):
             signal_item = QTableWidgetItem(signal)
             value_item = QTableWidgetItem("0" if signal not in ['Drive Mode', 'DTC'] else "Unknown" if signal == 'Drive Mode' else "No Issues")
+            signal_item.setFont(table_font)
+            value_item.setFont(table_font)
             self.pcm_table_main.setItem(row, 0, signal_item)
             self.pcm_table_main.setItem(row, 1, value_item)
-        self.pcm_table_main.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        self.pcm_table_main.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        main_layout.addWidget(self.pcm_table_main, alignment=Qt.AlignCenter)
+        self.pcm_table_main.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        content_layout.addWidget(self.pcm_table_main)
 
+        main_layout.addLayout(content_layout)
         main_layout.addStretch()
 
     def create_dyno_screen(self):
@@ -650,7 +697,6 @@ class Dashboard(QWidget):
         acc_screen = QWidget()
         acc_layout = QVBoxLayout(acc_screen)
 
-        # CACC Indicator and Mileage
         cacc_layout = QHBoxLayout()
         cacc_layout.setSpacing(100)
         self.cacc_indicator = CACCIndicator()
@@ -661,7 +707,6 @@ class Dashboard(QWidget):
         cacc_layout.addStretch()
         acc_layout.addLayout(cacc_layout)
 
-        # Vehicle Ahead Indicator, Headway, and Distance
         vai_layout = QHBoxLayout()
         vai_layout.setSpacing(100)
         self.VAI_Indicator = VehicleAheadIndicator()
@@ -675,7 +720,6 @@ class Dashboard(QWidget):
         vai_layout.addStretch()
         acc_layout.addLayout(vai_layout)
 
-        # Add Traffic Light Indicator
         traffic_light_layout = QHBoxLayout()
         self.traffic_light_indicator = TrafficLightIndicator()
         traffic_light_layout.addWidget(self.traffic_light_indicator, alignment=Qt.AlignCenter)
@@ -684,7 +728,6 @@ class Dashboard(QWidget):
 
         acc_layout.addStretch()
 
-        # Back button
         back_button = QPushButton("Back to Main Dashboard")
         back_button.setFixedSize(1000, 100)
         back_button.clicked.connect(lambda: self.switch_screen(0))
@@ -695,7 +738,6 @@ class Dashboard(QWidget):
         lcc_screen = QWidget()
         lcc_layout = QVBoxLayout(lcc_screen)
 
-        # Add LCC Indicator
         lcc_indicator_layout = QHBoxLayout()
         self.lcc_indicator = LCCIndicator()
         lcc_indicator_layout.addWidget(self.lcc_indicator, alignment=Qt.AlignCenter)
@@ -704,7 +746,6 @@ class Dashboard(QWidget):
 
         lcc_layout.addStretch()
 
-        # Back button
         back_button = QPushButton("Back to Main Dashboard")
         back_button.setFixedSize(1000, 100)
         back_button.clicked.connect(lambda: self.switch_screen(0))
@@ -731,6 +772,7 @@ class Dashboard(QWidget):
     def closeEvent(self, event):
         self.dyno_thread_running = False
         self.ain_thread_running = False
+        self.dms_thread_running = False
         if self.bus:
             self.bus.shutdown()
         event.accept()
@@ -739,6 +781,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     globalFont = QFont("Arial", 18)
     app.setFont(globalFont)
-    window = Dashboard()
+    window = Dashboard()       
     window.showFullScreen()
     sys.exit(app.exec())
