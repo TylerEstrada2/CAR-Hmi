@@ -32,7 +32,7 @@ AIN_STATES = {
 }
 
 # Verify DBC file
-DBC_PATH = "/home/user/Code/CAN14_Y3Comp.dbc"
+DBC_PATH = "/home/user/Code/Y3CompV1_2.dbc"
 if not os.path.exists(DBC_PATH):
     logger.error(f"DBC file not found at {DBC_PATH}")
     sys.exit(1)
@@ -45,12 +45,12 @@ PCM_SIGNALS = [
     'Target_distance', 'USP_data_rx', 'Vehicle_ahead', 'ActETRS', 'BrakePdlPos', 'AccelPdlPos',
     'UDP_data_received', 'Sim_state', 'Dyno_mode_request',
     'LnDtWrnCntrlFtrSt', 'V2X_CurrentPhase',
-    'AIN_engaged', 'HMI2DMS', 'AINSystemStatus',
+    'AIN_engaged', 'DMS_engage', 'AINSystemStatus',
     'Warning_First', 'Warning_Second',
     'EDU001', 'EDU002', 'EDU003', 'EDU004'
 ]
 
-TX_SIGNALS = ['Dyno_mode_req_team', 'AIN_engaged', 'HMI2DMS']
+TX_SIGNALS = ['Dyno_mode_req_team', 'AIN_engaged', 'DMS_engage']
 
 MAIN_DASHBOARD_SIGNALS = [
     'Front Motor Power (kW)', 'Rear Motor Power (kW)', 'Battery Temperature (C)',
@@ -82,7 +82,7 @@ LCC_STATES = {
     0: ("Off", "gray"),
     1: ("Standby","white"),
     2: ("Active", "green"),
-    3: ("Disabled", "red"),
+    3: ("Disabled", "white"),
 }
 
 DRIVE_MODE_MAPPING = {0: "Unknown", 1: "Park", 2: "Reverse", 3: "Neutral", 4: "Drive"}
@@ -389,6 +389,9 @@ class Dashboard(QWidget):
             self.dms_active = False
             self.ain_mode_active = False
             self.ain_system_status = 0  # Initialize AINSystemStatus
+            self.warning_popup = None
+            self.warning_first_active = False
+            self.warning_second_active = False
 
             # === Setup Escape key to exit fullscreen ===
             self.exit_fullscreen_action = QAction("Exit Fullscreen", self)
@@ -420,15 +423,12 @@ class Dashboard(QWidget):
             self.battery_labels = []
             self.dtc_labels = []
             self.mil_indicator = None
-            self.warning_popup = None
-            self.warning_first_active = False
-            self.warning_second_active = False
             self.dtc_states = {signal: 0 for signal in DTC_SIGNALS}
 
             self.tx_messages = {
                 'Dyno_mode_req_team': 0x519,
                 'AIN_engaged': 0x519,
-                'HMI2DMS': 0x524
+                'DMS_engage': 0x519
             }
             self.validate_tx_messages()
 
@@ -468,16 +468,6 @@ class Dashboard(QWidget):
         else:
             self.showFullScreen()
 
-    def send_can_message(self, value):
-        message_id = 0x519
-        signal_name = "Dyno_mode_req_team"
-        self._send_message(message_id, signal_name, value, "Dyno")
-
-    def send_dms_can_message(self, value):
-        message_id = 0x524
-        signal_name = "HMI2DMS"
-        self._send_message(message_id, signal_name, value, "DMS")
-
     def _send_message(self, message_id, signal_name, value, message_type):
         retries = 3
         for attempt in range(retries):
@@ -498,6 +488,7 @@ class Dashboard(QWidget):
 
                 can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
                 self.bus.send(can_msg, timeout=0.4)
+                logger.info(f"Sent {message_type} message: ID={hex(message_id)}, Signal={signal_name}, Value={value}, Data={data.hex()}")
                 return
             except can.CanError as e:
                 logger.error(f"Attempt {attempt + 1}/{retries} - CAN Error sending {message_type}: {e}")
@@ -530,39 +521,44 @@ class Dashboard(QWidget):
                     message_id,
                     {
                         "Dyno_mode_req_team": dyno_value,
-                        "AIN_engaged": ain_value
+                        "AIN_engaged": ain_value,
+                        "DMS_engage": dms_value
                     },
                     strict=False
                 )
+                if len(data) < 8:
+                    data = data.ljust(8, b'\x00')
                 can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
                 self.bus.send(can_msg, timeout=0.2)
-                logger.info(f"Sent 0x519: Dyno_mode_req_team={dyno_value}, AIN_engaged={ain_value}, Data={data.hex()}")
+                logger.info(f"Sent 0x519: Dyno_mode_req_team={dyno_value}, AIN_engaged={ain_value},DMS_engage={dms_value}, Data={data.hex()}")
             except can.CanError as e:
                 logger.error(f"CAN Error sending 0x519 message: {e}")
             except Exception as e:
                 logger.error(f"Error sending 0x519 message: {e}")
             
-            # Send HMI2DMS (0x524)
-            try:
-                message_id = 0x524
-                data = db.encode_message(
-                    message_id,
-                    {
-                        "HMI2DMS": dms_value
-                    },
-                    strict=False
-                )
-                can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
-                self.bus.send(can_msg, timeout=0.3)
-                logger.info(f"Sent 0x524: HMI2DMS={dms_value}, Data={data.hex()}")
-            except can.CanError as e:
-                logger.error(f"CAN Error sending 0x524 message: {e}")
-            except Exception as e:
-                logger.error(f"Error sending 0x524 message: {e}")
+            # # Send HMI2DMS (0x524)
+            # try:
+            #     message_id = 0x524
+            #     data = db.encode_message(
+            #         message_id,
+            #         {
+            #             "HMI2DMS": dms_value
+            #         },
+            #         strict=False
+            #     )
+            #     if len(data) < 8:
+            #         data = data.ljust(8, b'\x00')
+            #     can_msg = can.Message(arbitration_id=message_id, data=data, is_extended_id=False)
+            #     self.bus.send(can_msg, timeout=0.5)
+            #     logger.info(f"Sent 0x524: HMI2DMS={dms_value}, Data={data.hex()}")
+            # except can.CanError as e:
+            #     logger.error(f"CAN Error sending 0x524 message: {e}")
+            # except Exception as e:
+            #     logger.error(f"Error sending 0x524 message: {e}")
             
             # Sleep to maintain 100ms cycle
             elapsed = time.time() - start_time
-            time.sleep(max(0.1 - elapsed, 0))
+            time.sleep(max(0.5 - elapsed, 0))
 
     def listen_can_messages(self):
         while True:
@@ -578,8 +574,12 @@ class Dashboard(QWidget):
                             elif isinstance(value, bool):
                                 value = 1 if value else 0
                             if signal in ['Headway_time', 'Target_distance']:
-                                logger.info(f"Received {signal}: value={value}, type={type(value)}")
-                                value = float(value)  # Ensure float for consistent handling
+                                try:
+                                    value = float(value)  # Ensure float for consistent handling
+                                    logger.info(f"Received {signal}: value={value}, type={type(value)}")
+                                except (ValueError, TypeError) as e:
+                                    logger.error(f"Failed to convert {signal} to float: value={value}, type={type(value)}, error={e}")
+                                    value = None  # Use None to indicate invalid value
                             self.signal_values[signal] = value
                             if signal == 'V2X_CurrentPhase':
                                 logger.info(f"Received V2X_CurrentPhase: {value}")
@@ -601,32 +601,38 @@ class Dashboard(QWidget):
                                     QMetaObject.invokeMethod(self, "update_signal_display_float", Qt.QueuedConnection, Q_ARG(str, signal), Q_ARG(float, value))
                                 elif isinstance(value, str):
                                     QMetaObject.invokeMethod(self, "update_signal_display_str", Qt.QueuedConnection, Q_ARG(str, signal), Q_ARG(str, value))
+                                elif value is None:
+                                    QMetaObject.invokeMethod(self, "update_signal_display_str", Qt.QueuedConnection, Q_ARG(str, signal), Q_ARG(str, "N/A"))
             except Exception as e:
                 logger.error(f"Error processing CAN message: {e}")
                 time.sleep(0.1)
 
     @Slot(int)
     def show_warning_popup(self, warning_type):
+        # Determine the message and check if the warning is already active
         if warning_type == 1:
+            if self.warning_first_active:
+                return  # Popup already shown for Warning_First
             self.warning_first_active = True
             message = "Driver: Pay Attention to the Road!"
         elif warning_type == 2:
+            if self.warning_second_active:
+                return  # Popup already shown for Warning_Second
             self.warning_second_active = True
             message = ("Driver: Pay Attention to the Road!\n"
                       "ACC and LCC systems will be disabled for 30 seconds after attention is regained.")
         else:
             return
 
-        # Safely close existing popup
-        if self.warning_popup is not None:
+        # Close existing popup if it exists and is visible
+        if self.warning_popup is not None and self.warning_popup.isVisible():
             try:
-                if self.warning_popup.isVisible():
-                    self.warning_popup.close()
-                self.warning_popup.deleteLater()  # Cleanup
+                self.warning_popup.close()
+                self.warning_popup.deleteLater()
             except Exception as e:
                 logger.warning(f"Warning popup close/delete failed: {e}")
 
-        # Show new popup
+        # Create and show new popup
         self.warning_popup = WarningPopup(self, warning_message=message)
         self.warning_popup.setWindowModality(Qt.ApplicationModal)
         self.warning_popup.show()
@@ -642,9 +648,16 @@ class Dashboard(QWidget):
         elif warning_type == 2:
             self.warning_second_active = False
 
+        # Close popup only if no warnings are active
         if not self.warning_first_active and not self.warning_second_active:
             if self.warning_popup and self.warning_popup.isVisible():
-                self.warning_popup.close()
+                try:
+                    self.warning_popup.close()
+                    self.warning_popup.deleteLater()
+                    self.warning_popup = None
+                except Exception as e:
+                    logger.warning(f"Warning popup close/delete failed: {e}")
+                logger.info("DMS Warning popup closed: No active warnings")
 
     @Slot(str, str)
     def update_drive_mode_display(self, signal_name, value):
@@ -676,24 +689,51 @@ class Dashboard(QWidget):
         logger.info(f"Processing signal: {signal_name}, value={value}, type={type(value)}")
         if hasattr(value, 'name'):
             value = value.name
+
         if signal_name == 'ActETRS':
             return
-        if signal_name == 'CACC_light':
+
+        if signal_name == 'Headway_time':
+            if value is None or isinstance(value, str) or value == 0.0:
+                self.VAI_Headway_Label.setText("Headway: N/A")
+                logger.warning(f"Invalid Headway_time value: {value}")
+            else:
+                try:
+                    formatted_value = f"{float(value):.1f}"
+                    self.VAI_Headway_Label.setText(f"Headway: {formatted_value} s")
+                    logger.info(f"Updated Headway_time: {formatted_value} s")
+                except (ValueError, TypeError) as e:
+                    self.VAI_Headway_Label.setText("Headway: N/A")
+                    logger.error(f"Error formatting Headway_time: value={value}, error={e}")
+
+        elif signal_name == 'Target_distance':
+            if value is None or isinstance(value, str) or value == 0.0:
+                self.VAI_Distance_Label.setText("Distance: N/A")
+                logger.warning(f"Invalid Target_distance value: {value}")
+            else:
+                try:
+                    formatted_value = f"{float(value):.1f}"
+                    self.VAI_Distance_Label.setText(f"Distance: {formatted_value} m")
+                    logger.info(f"Updated Target_distance: {formatted_value} m")
+                except (ValueError, TypeError) as e:
+                    self.VAI_Distance_Label.setText("Distance: N/A")
+                    logger.error(f"Error formatting Target_distance: value={value}, error={e}")
+
+        elif signal_name == 'CACC_light':
             self.cacc_indicator.set_state(int(value))
-        if signal_name in ['Headway_time', 'Target_distance']:
-            try:
-                value = float(value)  # Ensure float for consistent display
-            except (ValueError, TypeError) as e:
-                logger.error(f"Error converting {signal_name} to float: {value}, Error: {e}")
-                value = 0.0
+
         elif signal_name == 'Vehicle_ahead':
             self.VAI_Indicator.set_state(int(value))
+
         elif signal_name == 'Sim_state':
             self.sim_active_label.setStyleSheet(f"color: {'green' if value == 1 else 'white'};")
+
         elif signal_name == 'Dyno_mode_request':
             self.dyno_request_label.setStyleSheet(f"color: {'green' if value == 1 else 'white'};")
+
         elif signal_name == 'UDP_data_received':
             self.sim_udp_label.setStyleSheet(f"color: {'green' if value == 1 else 'white'};")
+
         elif signal_name in DTC_SIGNALS:
             self.dtc_states[signal_name] = int(value)
             active_dtcs = [DTC_DESCRIPTIONS[sig] for sig, state in self.dtc_states.items() if state == 1]
@@ -703,10 +743,13 @@ class Dashboard(QWidget):
             self.mil_indicator.setVisible(any_dtc_active)
             for label in self.dtc_labels:
                 label.setText("DTC: Active" if any_dtc_active else "DTC: No Issues")
+
         elif signal_name == 'LnDtWrnCntrlFtrSt':
             self.lcc_indicator.set_state(int(value))
+
         elif signal_name == 'V2X_CurrentPhase':
             self.traffic_light_indicator.set_state(int(value))
+
         elif signal_name == 'AINSystemStatus':
             try:
                 self.ain_system_status = int(value)
@@ -716,46 +759,41 @@ class Dashboard(QWidget):
                 self.ain_system_status = 0
                 self.update_ain_button_color()
 
-        rounded_value = round(value, 1) if isinstance(value, float) else value
-        if signal_name == 'RESS_SOC':
-            soc_rounded = round(value, 1)
-            for label, widget in zip(self.battery_labels, self.battery_widgets):
-                label.setText(f"Battery: {soc_rounded}%")
-                widget.set_charge(soc_rounded)
-            mapped_name = SIGNAL_NAME_MAPPING.get('Battery SOC (%)')
-            if mapped_name and mapped_name in PCM_SIGNALS_PCM:
-                row = PCM_SIGNALS_PCM.index(mapped_name)
-                self.pcm_table.setItem(row, 1, QTableWidgetItem(str(soc_rounded)))
+        else:
+            rounded_value = round(value, 1) if isinstance(value, float) else value
+            if signal_name == 'RESS_SOC':
+                soc_rounded = round(value, 1)
+                for label, widget in zip(self.battery_labels, self.battery_widgets):
+                    label.setText(f"Battery: {soc_rounded}%")
+                    widget.set_charge(soc_rounded)
+                mapped_name = SIGNAL_NAME_MAPPING.get('Battery SOC (%)')
+                if mapped_name and mapped_name in PCM_SIGNALS_PCM:
+                    row = PCM_SIGNALS_PCM.index(mapped_name)
+                    self.pcm_table.setItem(row, 1, QTableWidgetItem(str(soc_rounded)))
 
-        mapped_name = next((new_name for new_name, orig_name in SIGNAL_NAME_MAPPING.items() if orig_name == signal_name), None)
-        if mapped_name:
-            if mapped_name in PCM_SIGNALS_PCM:
-                row = PCM_SIGNALS_PCM.index(mapped_name)
-                if mapped_name in ['Front Motor Power (kW)', 'Rear Motor Power (kW)']:
-                    self.pcm_table.setItem(row, 1, QTableWidgetItem(str(round(rounded_value/1000, 3))))
-                else:
-                    self.pcm_table.setItem(row, 1, QTableWidgetItem(str(rounded_value)))
-            if mapped_name in MAIN_DASHBOARD_SIGNALS:
-                row = MAIN_DASHBOARD_SIGNALS.index(mapped_name)
-                if mapped_name in ['Front Motor Power (kW)', 'Rear Motor Power (kW)']:
-                    self.pcm_table_main.setItem(row, 1, QTableWidgetItem(str(round(rounded_value/1000, 3))))
-                else:
-                    self.pcm_table_main.setItem(row, 1, QTableWidgetItem(str(rounded_value)))
+            mapped_name = next((new_name for new_name, orig_name in SIGNAL_NAME_MAPPING.items() if orig_name == signal_name), None)
+            if mapped_name:
+                if mapped_name in PCM_SIGNALS_PCM:
+                    row = PCM_SIGNALS_PCM.index(mapped_name)
+                    if mapped_name in ['Front Motor Power (kW)', 'Rear Motor Power (kW)']:
+                        self.pcm_table.setItem(row, 1, QTableWidgetItem(str(round(rounded_value/1000, 3))))
+                    else:
+                        self.pcm_table.setItem(row, 1, QTableWidgetItem(str(rounded_value)))
+                if mapped_name in MAIN_DASHBOARD_SIGNALS:
+                    row = MAIN_DASHBOARD_SIGNALS.index(mapped_name)
+                    if mapped_name in ['Front Motor Power (kW)', 'Rear Motor Power (kW)']:
+                        self.pcm_table_main.setItem(row, 1, QTableWidgetItem(str(round(rounded_value/1000, 3))))
+                    else:
+                        self.pcm_table_main.setItem(row, 1, QTableWidgetItem(str(rounded_value)))
 
-        elif signal_name == 'AccelPdlPos':
-            row = MAIN_DASHBOARD_SIGNALS.index('Accelerator Pedal Position (%)')
-            self.pcm_table_main.setItem(row, 1, QTableWidgetItem(f"{rounded_value}%"))
-        elif signal_name == 'BrakePdlPos':
-            row = MAIN_DASHBOARD_SIGNALS.index('Brake Pedal Position (%)')
-            self.pcm_table_main.setItem(row, 1, QTableWidgetItem(f"{rounded_value}%"))
-        elif signal_name == 'Target_distance':
-            self.VAI_Distance_Label.setText(f"Distance: {rounded_value:.1f} m")
-        elif signal_name == 'Headway_time':
-            self.VAI_Headway_Label.setText(f"Headway: {rounded_value:.1f} s")
-        elif signal_name == "CACC_State":
-            self.update_cacc_indicator(rounded_value)
-        elif signal_name == 'CACC_mileage':
-            self.cacc_mileage_label.setText(f"Current CACC Mileage: {round(rounded_value*0.621371,1)} mi")
+            elif signal_name == 'AccelPdlPos':
+                row = MAIN_DASHBOARD_SIGNALS.index('Accelerator Pedal Position (%)')
+                self.pcm_table_main.setItem(row, 1, QTableWidgetItem(f"{rounded_value}%"))
+            elif signal_name == 'BrakePdlPos':
+                row = MAIN_DASHBOARD_SIGNALS.index('Brake Pedal Position (%)')
+                self.pcm_table_main.setItem(row, 1, QTableWidgetItem(f"{rounded_value}%"))
+            elif signal_name == 'CACC_mileage':
+                self.cacc_mileage_label.setText(f"Current CACC Mileage: {round(rounded_value*0.621371,1)} mi")
 
     def toggle_dyno_icon(self):
         try:
@@ -765,12 +803,9 @@ class Dashboard(QWidget):
             logger.info(f"Dyno button size: {button_width}x{button_height}")
             button.setFixedSize(button_width, button_height)
             with self.dyno_mode_lock:
-                if button.isChecked():
-                    button.setStyleSheet("background-color: green; color: white;")
-                    self.dyno_mode_active = True
-                else:
-                    button.setStyleSheet("background-color: gray; color: black;")
-                    self.dyno_mode_active = False
+                self.dyno_mode_active = button.isChecked()
+                button.setStyleSheet(f"background-color: {'green' if self.dyno_mode_active else 'gray'}; color: {'white' if self.dyno_mode_active else 'black'};")
+                logger.info(f"Dyno mode toggled: dyno_mode_active={self.dyno_mode_active}")
         except Exception as e:
             logger.error(f"Error toggling dyno icon: {e}\n{traceback.format_exc()}")
 
@@ -796,14 +831,9 @@ class Dashboard(QWidget):
             logger.info(f"DMS button size: {button_width}x{button_height}")
             button.setFixedSize(button_width, button_height)
             with self.dms_mode_lock:
-                if button.isChecked():
-                    button.setStyleSheet("background-color: green; color: white;")
-                    self.dms_active = True
-                    logger.info("DMS activated: self.dms_active=True")
-                else:
-                    button.setStyleSheet("background-color: gray; color: black;")
-                    self.dms_active = False
-                    logger.info("DMS deactivated: self.dms_active=False")
+                self.dms_active = button.isChecked()
+                button.setStyleSheet(f"background-color: {'green' if self.dms_active else 'gray'}; color: {'white' if self.dms_active else 'black'};")
+                logger.info(f"DMS toggled: dms_active={self.dms_active}, DMS_engage={'1' if self.dms_active else '0'}")
         except Exception as e:
             logger.error(f"Error toggling DMS icon: {e}\n{traceback.format_exc()}")
 
